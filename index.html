@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>블로거 → 카드뉴스 → Threads 예약</title>
+<style>
+:root{--bg:#fafaf7;--fg:#1c1c1a;--mut:#6b6b66;--card:#fff;--line:#e3e2dc;--ac:#e1306c}
+@media(prefers-color-scheme:dark){:root{--bg:#151514;--fg:#f1f0ea;--mut:#a09f98;--card:#1f1f1d;--line:#35352f}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",system-ui,sans-serif;line-height:1.5}
+main{max-width:760px;margin:0 auto;padding:20px 16px 80px}h1{font-size:22px}h2{font-size:16px;margin:28px 0 8px}
+input,textarea{width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--fg)}
+textarea{min-height:90px}.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}.row>*{flex:0 0 auto}.row input{width:auto}
+button{font:inherit;font-weight:700;padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff}button:disabled{opacity:.5}
+.sw{width:34px;height:34px;padding:0;border-radius:50%}.sw.on{outline:3px solid var(--ac);outline-offset:2px}
+.st{font-size:13px;color:var(--mut);margin-top:8px;min-height:18px}
+.post{display:flex;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;margin-top:8px}
+.post input{width:20px;height:20px;flex:none}.post img{width:56px;height:56px;object-fit:cover;border-radius:8px;flex:none}
+.post b{font-size:14px;display:block}.post small{color:var(--mut)}
+.res{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:12px}
+.strip{display:flex;gap:6px;overflow-x:auto;margin:8px 0}.strip canvas{height:150px;width:auto;border-radius:6px;flex:none}
+.q{font-size:14px;padding:8px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+.s-pending{color:#b7791f}.s-ready{color:#2b59c3}.s-posting{color:#2b59c3}.s-done{color:#0f9d77}.s-failed,.s-canceled{color:#c53030}
+label.l{font-size:13px;font-weight:700;display:block;margin-top:12px}
+</style>
+</head>
+<body>
+<main>
+<h1>블로거 → 카드뉴스 → Threads 예약</h1>
+
+<h2>1. 블로그 글 목록</h2>
+<input id="blog" type="url" value="https://iamtaxi.blogspot.com">
+<div class="row"><button id="load">글 목록 불러오기</button><button id="more" disabled>더 불러오기</button><button id="selall" disabled>전체 선택</button></div>
+<div class="st" id="st1"></div>
+<div id="list"></div>
+
+<h2>2. 카드뉴스 만들기</h2>
+<div class="row" id="themes"></div>
+<div class="row"><button class="p" id="make" disabled>선택한 글 카드뉴스 만들기</button></div>
+<div class="st" id="st2"></div>
+<div id="results"></div>
+
+<h2>3. Threads 예약</h2>
+<div class="row">
+  <label>첫 게시 시각 <input id="first" type="datetime-local"></label>
+  <label>글 사이 간격(분) <input id="gap" type="number" min="1" value="60" style="width:90px"></label>
+</div>
+<div class="row"><button class="p" id="sched" disabled>예약 등록</button></div>
+<div class="st" id="st3"></div>
+
+<h2>예약 현황</h2>
+<div class="row"><button id="rq">새로고침</button></div>
+<div id="queue"></div>
+</main>
+<script>
+const W=1080,H=1350,FF='"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",system-ui,sans-serif';
+const TH=[{bg:"#fff1f5",fg:"#2a1520",ac:"#e1306c",cv:"#e1306c",cf:"#ffffff"},{bg:"#f3f6fb",fg:"#14213d",ac:"#2b59c3",cv:"#14213d",cf:"#ffffff"},{bg:"#effaf6",fg:"#10332a",ac:"#0f9d77",cv:"#0f9d77",cf:"#ffffff"},{bg:"#1a1a1a",fg:"#f5f5f0",ac:"#ffd23f",cv:"#ffd23f",cf:"#1a1a1a"}];
+let th=0,CODE=localStorage.getItem("code")||"",posts=[],next=1,checked=new Set(),results=[];
+const $=id=>document.getElementById(id),q=()=>"code="+encodeURIComponent(CODE),st=(n,m)=>$("st"+n).textContent=m;
+async function api(p,o){
+  const r=await fetch(p+(p.includes("?")?"&":"?")+q(),o),d=await r.json().catch(()=>({}));
+  if(r.status===401){const c=prompt("접속 코드를 입력하세요");if(c){CODE=c;localStorage.setItem("code",c);return api(p,o)}throw new Error("접속 코드가 필요해요")}
+  if(!r.ok)throw new Error(d.error||"요청 실패");return d;
+}
+const post=(p,b)=>api(p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})});
+const pad=n=>String(n).padStart(2,"0");
+{const d=new Date(Date.now()+10*60000);$("first").value=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`}
+
+$("themes").innerHTML=TH.map((t,i)=>`<button class="sw" data-i="${i}" style="background:${t.cv}"></button>`).join("");
+const mark=()=>document.querySelectorAll(".sw").forEach((b,i)=>b.classList.toggle("on",i===th));mark();
+$("themes").onclick=e=>{const b=e.target.closest(".sw");if(b){th=+b.dataset.i;mark()}};
+
+// ── 1. 목록
+function showList(){
+  $("list").innerHTML=posts.map((p,i)=>`<label class="post"><input type="checkbox" data-i="${i}" ${checked.has(p.url)?"checked":""}>${p.thumb?`<img src="${p.thumb}" alt="">`:""}<span><b>${p.title.replace(/</g,"&lt;")}</b><small>${(p.date||"").slice(0,10)}</small></span></label>`).join("");
+  $("make").disabled=!checked.size;$("selall").disabled=!posts.length;
+}
+$("list").onchange=e=>{const i=e.target.dataset.i;if(i===undefined)return;const u=posts[i].url;e.target.checked?checked.add(u):checked.delete(u);$("make").disabled=!checked.size};
+async function loadList(reset){
+  if(reset){posts=[];next=1;checked.clear()}
+  try{st(1,"불러오는 중…");
+    const d=await api("/api/list?blog="+encodeURIComponent($("blog").value.trim())+"&start="+next);
+    posts.push(...d.posts);next=d.next;showList();$("more").disabled=next>d.total;st(1,`${posts.length} / 전체 ${d.total}개`);
+  }catch(e){st(1,"오류: "+e.message)}
+}
+$("load").onclick=()=>loadList(true);$("more").onclick=()=>loadList(false);
+$("selall").onclick=()=>{posts.forEach(p=>checked.add(p.url));showList()};
+
+// ── 2. 카드 그리기
+function wrap(x,t,mw){const o=[];for(const p of String(t||"").split("\n")){let c="";for(const ch of p){if(x.measureText(c+ch).width>mw&&c){o.push(c);c=ch.trim()?ch:""}else c+=ch}o.push(c)}return o}
+function fit(x,t,w,s,min,mw,max){let l;for(;s>=min;s-=4){x.font=`${w} ${s}px ${FF}`;l=wrap(x,t,mw);if(l.length<=max)break}return{s,l:l.slice(0,max)}}
+function cover(x,im,dx,dy,dw,dh){const r=Math.max(dw/im.width,dh/im.height),w=im.width*r,h=im.height*r;x.save();x.beginPath();x.rect(dx,dy,dw,dh);x.clip();x.drawImage(im,dx+(dw-w)/2,dy+(dh-h)/2,w,h);x.restore()}
+function draw(cv,c,i,n,im){
+  const t=TH[th],x=cv.getContext("2d"),P=100,mw=W-P*2;cv.width=W;cv.height=H;x.textBaseline="top";
+  if(c.type==="cover"){
+    x.fillStyle=t.cv;x.fillRect(0,0,W,H);
+    if(im){cover(x,im,0,0,W,H);x.fillStyle="rgba(0,0,0,.55)";x.fillRect(0,0,W,H);x.fillStyle="#fff"}else x.fillStyle=t.cf;
+    x.font=`700 38px ${FF}`;x.fillText("CARD NEWS",P,P);
+    const f=fit(x,c.head,900,104,56,mw,5);x.font=`900 ${f.s}px ${FF}`;let y=380;
+    for(const l of f.l){x.fillText(l,P,y);y+=f.s*1.3}
+    x.fillRect(P,y+20,120,10);x.font=`400 42px ${FF}`;y+=70;for(const l of wrap(x,c.body,mw).slice(0,4)){x.fillText(l,P,y);y+=62}
+    x.font=`700 34px ${FF}`;x.fillText("옆으로 넘겨보세요  →",P,H-P-30);return;
+  }
+  x.fillStyle=t.bg;x.fillRect(0,0,W,H);x.fillStyle=t.ac;x.fillRect(0,0,W,16);
+  x.font=`900 34px ${FF}`;x.fillText(c.type==="outro"?"SUMMARY":pad(i),P,P);
+  x.fillStyle=t.fg;x.globalAlpha=.5;x.font=`700 30px ${FF}`;const pg=`${i+1} / ${n}`;x.fillText(pg,W-P-x.measureText(pg).width,P+2);x.globalAlpha=1;
+  let y=im?170:230;if(im){cover(x,im,P,y,mw,420);y+=470}
+  x.fillStyle=t.fg;const f=fit(x,c.head,900,im?58:70,40,mw,im?2:3);x.font=`900 ${f.s}px ${FF}`;
+  for(const l of f.l){x.fillText(l,P,y);y+=f.s*1.3}
+  x.fillStyle=t.ac;x.fillRect(P,y+10,90,8);y+=50;x.fillStyle=t.fg;
+  const b=fit(x,c.body,400,im?40:46,28,mw,Math.max(3,Math.floor((H-P-60-y)/(im?60:76))));x.font=`400 ${b.s}px ${FF}`;
+  for(const l of b.l){x.fillText(l,P,y);y+=b.s*1.6}
+  if(c.src){x.globalAlpha=.55;x.font=`400 28px ${FF}`;x.fillText(wrap(x,"출처 "+c.src,mw)[0],P,H-P-20);x.globalAlpha=1}
+}
+function localSplit(text,src,title){
+  const s=text.replace(/\s+/g," ").split(/(?<=[.!?다요죠])\s+/).filter(v=>v.trim().length>1),per=Math.max(2,Math.ceil(s.length/6)),g=[];
+  for(let i=0;i<s.length;i+=per)g.push(s.slice(i,i+per).join(" "));
+  return[{type:"cover",head:title.slice(0,40),body:(s[0]||"").slice(0,70)},...g.slice(0,6).map(v=>({type:"body",head:v.split(/[,.]/)[0].slice(0,24),body:v.slice(0,200)})),{type:"outro",head:"끝까지 읽어주셔서 감사해요",body:"도움이 되셨다면 저장하고 공유해 주세요.",src}];
+}
+const loadImg=u=>new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.onerror=()=>r(null);i.src="/api/img?"+q()+"&url="+encodeURIComponent(u)});
+
+async function makeOne(p){
+  const d=await api("/api/fetch?url="+encodeURIComponent(p.url));
+  const s=await post("/api/summarize",{title:d.title,text:d.text}),r=s.cards;let cards;
+  if(r&&r.cover&&Array.isArray(r.cards)&&r.cards.length)
+    cards=[{type:"cover",head:r.cover.title||d.title,body:r.cover.subtitle||""},...r.cards.slice(0,8).map(c=>({type:"body",head:c.head||"",body:c.body||""})),{type:"outro",head:(r.outro&&r.outro.title)||"감사합니다",body:(r.outro&&r.outro.body)||"",src:d.url}];
+  else cards=localSplit(d.text,d.url,d.title);
+  const ims=await Promise.all(d.images.slice(0,cards.length).map(loadImg));
+  const cvs=cards.map((c,i)=>{const cv=document.createElement("canvas");draw(cv,c,i,cards.length,ims[i]);return cv});
+  return{title:d.title,url:p.url,cvs,caption:`${d.title}\n\n원문 보기: ${p.url}`.slice(0,500)};
+}
+$("make").onclick=async()=>{
+  const sel=posts.filter(p=>checked.has(p.url));results=[];$("results").innerHTML="";$("make").disabled=true;$("sched").disabled=true;
+  await (document.fonts?document.fonts.ready:0);
+  for(let i=0;i<sel.length;i++){
+    st(2,`(${i+1}/${sel.length}) 만드는 중: ${sel[i].title}`);
+    try{
+      const r=await makeOne(sel[i]);results.push(r);
+      const d=document.createElement("div");d.className="res";d.innerHTML=`<b>${r.title.replace(/</g,"&lt;")}</b> <small>카드 ${r.cvs.length}장</small>`;
+      const sp=document.createElement("div");sp.className="strip";r.cvs.forEach(c=>sp.appendChild(c));
+      const ta=document.createElement("textarea");ta.value=r.caption;ta.maxLength=500;ta.oninput=()=>r.caption=ta.value;
+      d.append(sp,ta);$("results").appendChild(d);
+    }catch(e){st(2,`오류(${sel[i].title}): ${e.message}`);await new Promise(r=>setTimeout(r,1500))}
+  }
+  st(2,`${results.length}개 완성. 아래 문구(최대 500자)는 Threads 글로 올라가요.`);$("make").disabled=false;$("sched").disabled=!results.length;
+};
+
+// ── 3. 예약
+$("sched").onclick=async()=>{
+  const t0=new Date($("first").value).getTime(),gap=(+$("gap").value||60)*60000;
+  if(!t0){st(3,"첫 게시 시각을 정해 주세요.");return}
+  $("sched").disabled=true;
+  try{
+    const jobs=[];
+    for(let i=0;i<results.length;i++){
+      const r=results[i],images=[];
+      for(let k=0;k<r.cvs.length;k++){st(3,`(${i+1}/${results.length}) 이미지 업로드 ${k+1}/${r.cvs.length}`);images.push((await post("/api/upload",{dataUrl:r.cvs[k].toDataURL("image/jpeg",.92)})).url)}
+      jobs.push({title:r.title,text:r.caption,images,runAt:t0+i*gap});
+    }
+    await post("/api/queue",{jobs});results=[];$("results").innerHTML="";st(3,`${jobs.length}개 예약 완료!`);showQueue();
+  }catch(e){st(3,"오류: "+e.message);$("sched").disabled=false}
+};
+const LB={pending:"대기",ready:"게시 직전",posting:"게시 중",done:"완료",failed:"실패",canceled:"취소"};
+async function showQueue(){
+  try{const d=await api("/api/queue");
+    $("queue").innerHTML=(d.jobs.length?"":"<div class='st'>예약이 없어요.</div>")+(d.threads?"":"<div class='st'>⚠ 서버에 THREADS_ACCESS_TOKEN이 없어 게시되지 않아요.</div>")+
+    d.jobs.slice().reverse().map(j=>`<div class="q"><span>${j.title.replace(/</g,"&lt;")}<br><small>${new Date(j.runAt).toLocaleString("ko-KR")} · ${j.count}장${j.error?" · "+j.error.replace(/</g,"&lt;"):""}</small></span><span><b class="s-${j.status}">${LB[j.status]||j.status}</b>${j.status==="pending"?` <button data-c="${j.id}">취소</button>`:""}</span></div>`).join("");
+  }catch(e){$("queue").innerHTML="<div class='st'>"+e.message+"</div>"}
+}
+$("queue").onclick=async e=>{const id=e.target.dataset.c;if(id){await post("/api/cancel?id="+id);showQueue()}};
+$("rq").onclick=showQueue;showQueue();setInterval(showQueue,60000);
+</script>
+</body>
+</html>
